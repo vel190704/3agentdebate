@@ -1,0 +1,193 @@
+{% extends "_base.html" %}
+{% block title %}Board — {{ task.description[:50] }}{% endblock %}
+
+{% macro verify_widget(decision_id, source_field, claim_text) %}
+  {% set ev = evidence_by_field.get(decision_id ~ ':' ~ source_field) %}
+  {% if ev %}
+    <div class="evidence-verdict evidence-{{ ev.verdict }}">
+      <span class="k">Evidence check: {{ ev.verdict }}</span>
+      {% if ev.caveats %}<div class="kv">Caveat: {{ ev.caveats }}</div>{% endif %}
+      <div class="kv muted">{{ ev.rationale }}</div>
+      {% if ev.sources %}
+      <div class="kv muted">Sources: {% for s in ev.sources %}<a href="{{ s }}" target="_blank" rel="noopener noreferrer">{{ s }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</div>
+      {% endif %}
+      <div class="kv muted">Actual cost: ${{ '%.4f'|format(ev.cost_usd) }}</div>
+    </div>
+  {% else %}
+    <form method="post" action="/board/{{ task.task_id }}/verify-claim" class="verify-form">
+      <input type="hidden" name="decision_id" value="{{ decision_id }}">
+      <input type="hidden" name="source_field" value="{{ source_field }}">
+      <input type="hidden" name="claim_text" value="{{ claim_text }}">
+      <button type="submit" class="verify-btn">Verify this claim (~${{ '%.2f'|format(evidence_cost_range[0]) }}&ndash;${{ '%.2f'|format(evidence_cost_range[1]) }}+, real API call)</button>
+    </form>
+  {% endif %}
+{% endmacro %}
+
+{% block content %}
+<div class="top-nav"><a href="/board">&larr; All tasks</a></div>
+<h1>{{ task.description }}</h1>
+{% if task.context_text %}
+<p class="muted">{{ task.context_text }}</p>
+{% endif %}
+
+<div class="panel token-summary">
+  <h2>Cost / token usage</h2>
+  <table>
+    <thead><tr><th>Phase</th><th>Prompt</th><th>Completion</th><th>Total</th></tr></thead>
+    <tbody>
+      <tr><td>Framing (Claude)</td><td>{{ tokens.phases.framing.prompt }}</td><td>{{ tokens.phases.framing.completion }}</td><td>{{ tokens.phases.framing.total }}</td></tr>
+      <tr><td>Proposers (GPT + DeepSeek)</td><td>{{ tokens.phases.proposers.prompt }}</td><td>{{ tokens.phases.proposers.completion }}</td><td>{{ tokens.phases.proposers.total }}</td></tr>
+      <tr><td>Debate</td><td>{{ tokens.phases.debate.prompt }}</td><td>{{ tokens.phases.debate.completion }}</td><td>{{ tokens.phases.debate.total }}</td></tr>
+      <tr><td>Arbitration + synthesis (Claude)</td><td>{{ tokens.phases.arbitration_synthesis.prompt }}</td><td>{{ tokens.phases.arbitration_synthesis.completion }}</td><td>{{ tokens.phases.arbitration_synthesis.total }}</td></tr>
+    </tbody>
+    <tfoot>
+      <tr><td>Total</td><td></td><td></td><td>{{ tokens.total }}</td></tr>
+    </tfoot>
+  </table>
+  <p class="hint">Arbitration itself is pure code (no model call) — the tokens above are the synthesis explanation only.</p>
+</div>
+
+<h2>Decisions</h2>
+{% for d in task.decisions %}
+<div id="decision-{{ d.decision_id }}" class="decision {% if d.status == 'human_decision_required' %}needs-action{% elif d.status == 'debate_failed' %}debate-failed{% endif %}">
+  <div class="decision-head">
+    <div>
+      <span class="decision-title">{{ d.dimension }}</span>
+    </div>
+    <span class="badge {{ d.badge.css_class }}">{{ d.badge.icon }} {{ d.badge.label }}</span>
+  </div>
+  <div class="decision-subtitle">{{ d.badge.subtitle }}</div>
+
+  {% if d.winning_value %}
+  <div class="winning-value"><span class="label">Value</span>{{ d.winning_value }}</div>
+  {% elif d.status in ('human_decision_required', 'debate_failed') %}
+  <div class="winning-value"><span class="label">{% if d.status == 'debate_failed' %}Original proposals (debate incomplete){% else %}Values on the table{% endif %}</span>
+    {% for model, value in d.current_values_by_model.items() %}{{ model }}: {{ value }}{% if not loop.last %} &middot; {% endif %}{% endfor %}
+  </div>
+  {% endif %}
+
+  {% if d.coupled_count > 0 %}
+  <details class="coupled-note">
+    <summary>Coupled with {{ d.coupled_count }} other decision{{ 's' if d.coupled_count != 1 else '' }}</summary>
+    <ul>
+      {% for other in d.coupled_with %}<li>{{ other }}</li>{% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+
+  <details class="drilldown">
+    <summary>Details &amp; reasoning</summary>
+
+    <div class="round-label">Proposals</div>
+    {% for model, det in d.details_by_model.items() %}
+    <div class="model-block">
+      <div class="model-name">{{ model }} &mdash; {{ det.value }} <span class="muted">(confidence {{ det.confidence }})</span></div>
+      <div class="kv"><span class="k">Reasoning:</span> {{ det.reasoning }}</div>
+      {{ verify_widget(d.decision_id, 'proposal_reasoning:' ~ model, det.reasoning) }}
+      {% if det.cited_requirements %}<div class="kv"><span class="k">Cited:</span> {{ det.cited_requirements | join(', ') }}</div>{% endif %}
+      {% if det.assumptions %}
+      <div class="kv"><span class="k">Assumptions:</span></div>
+      {% for a in det.assumptions %}
+      <div class="kv" style="margin-left: 12px;">&bull; {{ a }}</div>
+      {{ verify_widget(d.decision_id, 'proposal_assumption:' ~ model ~ ':' ~ loop.index0, a) }}
+      {% endfor %}
+      {% endif %}
+      {% if det.proposer_added %}<div class="kv muted">Outside framing's expected options / added by this model.</div>{% endif %}
+    </div>
+    {% endfor %}
+
+    {% if d.debate %}
+    {% if d.debate.failed %}
+    <div class="ledger-entry" style="border-left-color: var(--amber);">
+      <div class="kv"><span class="k">Debate failed{% if d.debate.failed_round %} in round {{ d.debate.failed_round }}{% endif %}</span></div>
+      <div class="kv">A model call failed and could not be recovered after transport retries. Whatever rounds completed before the failure are shown below; anything after it never happened.</div>
+      {% if d.debate.error %}<div class="kv muted">{{ d.debate.error }}</div>{% endif %}
+    </div>
+    {% endif %}
+
+    <div class="round-label">Debate — round 1{% if d.debate.failed and d.debate.failed_round == 1 %} (failed){% endif %}</div>
+    {% if d.debate.failed and d.debate.failed_round == 1 %}
+    <div class="kv muted">No round 1 messages completed before the failure.</div>
+    {% endif %}
+    {% for m in d.debate.round_1 %}
+    <div class="model-block">
+      <div class="model-name">{{ m.model }} &mdash; {{ m.value }}</div>
+      <div class="kv"><span class="k">Claim:</span> {{ m.claim }}</div>
+      {{ verify_widget(d.decision_id, 'debate_round1_claim:' ~ m.model, m.claim) }}
+      <div class="kv"><span class="k">Cited requirement:</span> {{ m.cited_requirement or '(none)' }}</div>
+      <div class="kv"><span class="k">Tradeoff accepted:</span> {{ m.tradeoff_accepted }}</div>
+      {{ verify_widget(d.decision_id, 'debate_round1_tradeoff:' ~ m.model, m.tradeoff_accepted) }}
+      <div class="kv"><span class="k">Would change position if:</span> {{ m.condition_to_change_position }}</div>
+      {{ verify_widget(d.decision_id, 'debate_round1_condition:' ~ m.model, m.condition_to_change_position) }}
+    </div>
+    {% endfor %}
+
+    <div class="round-label">Debate — round 2 (final){% if d.debate.failed and d.debate.failed_round in (1, 2) %} (failed){% endif %}</div>
+    {% if d.debate.failed and d.debate.failed_round in (1, 2) %}
+    <div class="kv muted">No round 2 messages completed before the failure.</div>
+    {% endif %}
+    {% for m in d.debate.round_2 %}
+    <div class="model-block">
+      <div class="model-name">{{ m.model }} &mdash; {{ m.value }}</div>
+      <div class="kv"><span class="k">Claim:</span> {{ m.claim }}</div>
+      {{ verify_widget(d.decision_id, 'debate_round2_claim:' ~ m.model, m.claim) }}
+      <div class="kv"><span class="k">Cited requirement:</span> {{ m.cited_requirement or '(none)' }}</div>
+      <div class="kv"><span class="k">Tradeoff accepted:</span> {{ m.tradeoff_accepted }}</div>
+      {{ verify_widget(d.decision_id, 'debate_round2_tradeoff:' ~ m.model, m.tradeoff_accepted) }}
+      <div class="kv"><span class="k">Would change position if:</span> {{ m.condition_to_change_position }}</div>
+      {{ verify_widget(d.decision_id, 'debate_round2_condition:' ~ m.model, m.condition_to_change_position) }}
+    </div>
+    {% endfor %}
+
+    {% if d.debate.position_changes %}
+    <div class="kv"><span class="k">Position changes:</span>
+      {% for pc in d.debate.position_changes %}{{ pc.model }}: {{ pc.from }} &rarr; {{ pc.to }}{% if not loop.last %}; {% endif %}{% endfor %}
+    </div>
+    {% endif %}
+    {% endif %}
+
+    {% if d.error_ledger %}
+    <div class="round-label">Notable moments in this debate</div>
+    {% for entry in d.error_ledger %}
+    <div class="ledger-entry">
+      <div class="kv"><span class="k">{{ entry.category }}</span>{% if entry.challenged_model %} &mdash; {{ entry.detected_by }} on {{ entry.challenged_model }}{% else %} &mdash; {{ entry.detected_by }}{% endif %}</div>
+      <div class="kv">{{ entry.description }}</div>
+      <div class="kv muted">{{ entry.resolution }}</div>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    {% if d.arbiter and d.arbiter.scores %}
+    <div class="round-label">Arbiter score breakdown (citation-only)</div>
+    <table class="score-table">
+      <thead><tr><th>Model</th><th>Citation</th><th>Total</th></tr></thead>
+      <tbody>
+      {% for model, s in d.arbiter.scores.items() %}
+        {% set r2msg = (d.debate.round_2 | selectattr('model', 'equalto', model) | list | first) if d.debate else None %}
+        <tr>
+          <td>{{ model }}{% if d.arbiter.winner == model %} &#9733;{% endif %}</td>
+          <td>
+            {{ '%+d'|format(s.citation_points) }}<br><span class="muted">{{ s.citation_note }}</span>
+            {% if s.citation_relevance == 'unsupported' and r2msg %}
+            <div class="citation-relevance-note">cites {{ r2msg.cited_requirement }} (claim may not directly engage this requirement)</div>
+            {% endif %}
+          </td>
+          <td>{{ s.total_score }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% elif d.status == 'resolved_via_debate' %}
+    <div class="kv muted">Round 2 converged before arbitration — no scoring rubric ran.</div>
+    {% elif d.status == 'debate_failed' %}
+    <div class="kv muted">Debate never completed, so no scoring rubric ran — see the failure notice above.</div>
+    {% endif %}
+
+    {% if d.synthesis %}
+    <div class="round-label">Synthesis</div>
+    <div class="synthesis-box">{{ d.synthesis }}</div>
+    {% endif %}
+  </details>
+</div>
+{% endfor %}
+{% endblock %}

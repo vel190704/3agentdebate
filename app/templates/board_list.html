@@ -1,0 +1,43 @@
+{% extends "_base.html" %}
+{% block title %}Tasks — Multi-LLM Consensus Platform{% endblock %}
+{% block content %}
+<h1>Multi-LLM Consensus Platform</h1>
+<p class="muted">Submit a task and shared context, and two independent models will each propose a full set of decisions. Where they disagree, a targeted debate and a deterministic arbiter resolve it. This page runs the real pipeline — submitting takes 30–60 seconds while the actual model calls happen.</p>
+
+<div class="panel">
+  <h2>New task</h2>
+  <form class="submit-form" method="post" action="/board/submit" enctype="multipart/form-data">
+    <label for="project_name">Project name</label>
+    <input type="text" id="project_name" name="project_name" required>
+
+    <label for="task_description">Task description</label>
+    <textarea id="task_description" name="task_description" required placeholder="e.g. Design the backend architecture for a real-time order-processing system..."></textarea>
+
+    <label for="context_text">Shared context (optional)</label>
+    <textarea id="context_text" name="context_text" placeholder="Background, constraints, current pain points..."></textarea>
+
+    <label for="requirements_text">Requirements (optional, one per line)</label>
+    <textarea id="requirements_text" name="requirements_text" placeholder="Each line becomes req_1, req_2, ... in order."></textarea>
+    <div class="hint">Requirement IDs are assigned by line order and are what the models cite back to.</div>
+
+    <label for="file">Attach a PDF for extra context (optional)</label>
+    <input type="file" id="file" name="file" accept="application/pdf">
+
+    <button type="submit">Run task</button>
+  </form>
+</div>
+
+<div class="panel">
+  <h2>Existing tasks</h2>
+  {% if not tasks %}
+    <p class="muted">No tasks yet.</p>
+  {% else %}
+    {% for t in tasks %}
+    <div class="task-list-item">
+      <a href="/board/{{ t.id }}">{{ t.description[:90] }}{% if t.description|length > 90 %}…{% endif %}</a>
+      <div class="muted" style="font-size:0.8rem;">{{ t.created_at }}</div>
+    </div>
+    {% endfor %}
+  {% endif %}
+</div>
+{% endblock %}

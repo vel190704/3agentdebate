@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}Multi-LLM Consensus Platform{% endblock %}</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #e2e5ea;
+    --text: #1c2128;
+    --muted: #6b7280;
+    --green: #1a7f37;
+    --green-bg: #e6f4ea;
+    --teal: #0f6d76;
+    --teal-bg: #e2f4f5;
+    --blue: #1a56db;
+    --blue-bg: #e8f0fe;
+    --amber: #92620a;
+    --amber-bg: #fdf1d6;
+    --red: #a3181f;
+    --red-bg: #fbe7e7;
+    --gray: #57606a;
+    --gray-bg: #eef0f2;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.45;
+  }
+  .page { max-width: 900px; margin: 0 auto; padding: 28px 20px 80px; }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  h2 { font-size: 1.1rem; margin: 0 0 8px; }
+  .muted { color: var(--muted); }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 18px;
+  }
+  .top-nav { margin-bottom: 18px; font-size: 0.9rem; }
+
+  /* --- badges --- */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+  }
+  .badge-agreed { background: var(--green-bg); color: var(--green); border-color: #bfe3c9; }
+  .badge-agreed-debate { background: var(--teal-bg); color: var(--teal); border-color: #b9e0e2; }
+  .badge-resolved-confident { background: var(--blue-bg); color: var(--blue); border-color: #c3d6fb; }
+  .badge-action { background: var(--red-bg); color: var(--red); border-color: #f0b8ba; font-weight: 700; }
+  .badge-unopposed { background: var(--gray-bg); color: var(--gray); border-color: #d7dbe0; }
+  /* Amber, not red: an operational/technical failure, not a routine tie
+     waiting on a human product decision (that's badge-action, red). */
+  .badge-error { background: var(--amber-bg); color: var(--amber); border-color: #e3b969; font-weight: 700; }
+
+  /* --- decision cards --- */
+  .decision {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 14px;
+  }
+  .decision.needs-action { border-left: 4px solid var(--red); }
+  .decision.debate-failed { border-left: 4px solid var(--amber); }
+  .decision-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .decision-title { font-weight: 600; font-size: 1.02rem; }
+  .decision-subtitle { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
+  .winning-value {
+    margin-top: 10px;
+    font-size: 0.95rem;
+  }
+  .winning-value .label { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; margin-right: 6px; }
+
+  details.drilldown { margin-top: 12px; }
+  details.drilldown > summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--blue);
+    user-select: none;
+  }
+  details.drilldown[open] > summary { margin-bottom: 10px; }
+
+  .model-block {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: #fbfbfc;
+  }
+  .model-block .model-name { font-weight: 600; font-size: 0.88rem; }
+  .kv { font-size: 0.83rem; margin-top: 4px; }
+  .kv .k { color: var(--muted); }
+
+  .round-block { margin-bottom: 10px; }
+  .round-label { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 10px 0 6px; }
+
+  /* Plain narrative text, deliberately no badge/color coding - this is a
+     human-readable log, not a scoring signal, and must not visually compete
+     with the actual status badge in the card header. */
+  .ledger-entry { border-left: 2px solid var(--border); padding-left: 10px; margin-bottom: 10px; }
+  .ledger-entry .k { text-transform: none; font-weight: 600; color: var(--text); }
+
+  table.score-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 6px; }
+  table.score-table th, table.score-table td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.score-table th { color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; }
+  /* Informational only - deliberately not amber/red like a status badge.
+     This flags a single citation's topical overlap with what it cites, not
+     a problem with the decision's resolution; it must never visually
+     compete with the actual status badge in the card header above. */
+  .citation-relevance-note { font-size: 0.78rem; color: var(--muted); font-style: italic; margin-top: 3px; }
+
+  /* Evidence verification (Phase 4 item 3) - opt-in, one click per claim,
+     never automatic. The button always states its own cost range up front
+     so a click is never a surprise. */
+  .verify-form { margin: 4px 0 10px; }
+  .verify-btn {
+    font-size: 0.75rem; padding: 3px 9px; border-radius: 5px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--blue);
+    cursor: pointer;
+  }
+  .verify-btn:hover { background: var(--blue-bg); }
+  .evidence-verdict {
+    margin: 4px 0 10px; padding: 6px 10px; border-radius: 6px; font-size: 0.82rem;
+    border: 1px solid var(--border); background: #fbfbfc;
+  }
+  /* Color only marks the verdict word itself, not the whole card - this is
+     informational, non-scoring, exactly like citation_relevance and the
+     ledger, and must never visually compete with the decision's own badge. */
+  .evidence-supported .k { color: var(--green); }
+  .evidence-contradicted .k { color: var(--red); }
+  .evidence-unverifiable .k { color: var(--gray); }
+
+  .synthesis-box {
+    background: #fbfbfc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.88rem;
+    margin-top: 8px;
+  }
+
+  .coupled-note { font-size: 0.82rem; color: var(--muted); margin-top: 8px; }
+  .coupled-note ul { margin: 6px 0 0 18px; padding: 0; }
+
+  /* --- token summary --- */
+  .token-summary table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  .token-summary th, .token-summary td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  .token-summary th:first-child, .token-summary td:first-child { text-align: left; }
+  .token-summary tfoot td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; }
+
+  /* --- form --- */
+  form.submit-form label { display: block; font-size: 0.85rem; font-weight: 600; margin: 12px 0 4px; }
+  form.submit-form input[type=text], form.submit-form textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; font-size: 0.9rem;
+  }
+  form.submit-form textarea { min-height: 80px; resize: vertical; }
+  form.submit-form button {
+    margin-top: 16px; padding: 9px 18px; border: none; border-radius: 6px;
+    background: var(--blue); color: white; font-weight: 600; font-size: 0.9rem; cursor: pointer;
+  }
+  form.submit-form button:hover { background: #1543ad; }
+  .hint { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+
+  .task-list-item { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .task-list-item:last-child { border-bottom: none; }
+</style>
+</head>
+<body>
+<div class="page">
+{% block content %}{% endblock %}
+</div>
+</body>
+</html>
