@@ -8,8 +8,9 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..board_display import decision_badge
+from ..board_display import HUMAN_INPUT_ELIGIBLE_STATUSES, current_values_by_model, decision_badge
 from ..db import get_db
+from ..debate_diagram import build_debate_diagram
 from ..pipeline.evidence_verification import ESTIMATED_COST_RANGE, estimate_cost, verify_claim
 from ..token_summary import compute_token_summary
 from .tasks import build_task_detail, create_task
@@ -104,6 +105,65 @@ async def verify_claim_endpoint(
     return RedirectResponse(url=f"/board/{task_id}#decision-{decision_id}", status_code=303)
 
 
+@router.post("/{task_id}/human-decision")
+async def record_human_decision(
+    task_id: str,
+    decision_id: str = Form(...),
+    chosen_value: str = Form(...),
+    rationale: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Records a human's own answer for a decision the system didn't settle
+    confidently (see HumanDecision's docstring and
+    board_display.HUMAN_INPUT_ELIGIBLE_STATUSES). One row per decision_id -
+    a re-submission overwrites the existing row in place (version += 1,
+    updated_at bumped) rather than inserting a duplicate, so there's always
+    exactly one "current" human answer to compare against the system's
+    output, with version/updated_at showing whether it was ever revised.
+
+    chosen_model is derived here, not taken from the form: we compare
+    chosen_value against this decision's current per-model values (the same
+    values the board itself labels "current") and record a match, or null
+    if the human's wording doesn't match either verbatim.
+    """
+    task = db.query(models.Task).filter_by(id=task_id).first()
+    if task is None:
+        raise HTTPException(404, "task not found")
+
+    detail = build_task_detail(task_id, db)
+    decision = next((d for d in detail["decisions"] if d["decision_id"] == decision_id), None)
+    if decision is None:
+        raise HTTPException(404, "decision not found on this task")
+
+    normalized_choice = chosen_value.strip().lower()
+    chosen_model = None
+    for model_name, value in current_values_by_model(decision).items():
+        if value.strip().lower() == normalized_choice:
+            chosen_model = model_name
+            break
+
+    existing = db.query(models.HumanDecision).filter_by(task_id=task_id, decision_id=decision_id).first()
+    if existing is None:
+        db.add(
+            models.HumanDecision(
+                task_id=task_id,
+                decision_id=decision_id,
+                chosen_value=chosen_value,
+                chosen_model=chosen_model,
+                rationale=rationale,
+                version=1,
+            )
+        )
+    else:
+        existing.chosen_value = chosen_value
+        existing.chosen_model = chosen_model
+        existing.rationale = rationale
+        existing.version += 1
+    db.commit()
+
+    return RedirectResponse(url=f"/board/{task_id}#decision-{decision_id}", status_code=303)
+
+
 @router.get("/{task_id}")
 def board_detail(task_id: str, request: Request, db: Session = Depends(get_db)):
     detail = build_task_detail(task_id, db)
@@ -120,9 +180,9 @@ def board_detail(task_id: str, request: Request, db: Session = Depends(get_db)):
         # A debate_failed decision has a debate dict (failed=True) but an
         # empty round_2 - fall back to the original proposal values rather
         # than showing an empty "values on the table" line.
-        debate = decision.get("debate")
-        round2_values = {m["model"]: m["value"] for m in debate["round_2"]} if debate else {}
-        decision["current_values_by_model"] = round2_values or (decision.get("values_by_model") or {})
+        decision["current_values_by_model"] = current_values_by_model(decision)
+        decision["debate_diagram"] = build_debate_diagram(decision)
+        decision["human_input_eligible"] = decision["status"] in HUMAN_INPUT_ELIGIBLE_STATUSES
 
     token_summary = compute_token_summary(task_id, db)
 

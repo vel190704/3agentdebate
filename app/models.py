@@ -269,3 +269,41 @@ class EvidenceVerification(Base):
     web_search_requests = Column(Integer, default=0)
     cost_usd = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class HumanDecision(Base):
+    """A human's own recorded answer for a decision the system didn't settle
+    with confidence (human_decision_required - a genuine tie - or
+    debate_failed - no system answer at all because a model call broke).
+    This exists purely so the project can later ask "does the citation-only
+    rubric's near-misses correlate with what a human actually picks" - it is
+    NEVER read by the pipeline and NEVER changes DecisionResult.status or
+    winning_value. The system's output and the human's recorded choice are
+    kept fully separate so the two can be compared later; overwriting one
+    with the other would destroy the thing this table exists to preserve.
+
+    One row per (task_id, decision_id) - a re-submission overwrites in place
+    (same idempotent-by-natural-key posture as EvidenceVerification, except
+    EvidenceVerification refuses a second write entirely while this one is
+    expected to be revised, so version/updated_at exist to show it changed).
+
+    chosen_model is derived, not entered directly: the endpoint compares
+    chosen_value against the decision's current per-model values (the same
+    round-2-aware values the board itself shows as "current") and records
+    which model it matches, or null if the human's wording matches neither
+    verbatim - asking the human to separately self-report which model they
+    agree with would be redundant with chosen_value and could disagree with
+    it.
+    """
+
+    __tablename__ = "human_decisions"
+
+    id = Column(String, primary_key=True, default=gen_id)
+    task_id = Column(String, ForeignKey("tasks.id"), nullable=False)
+    decision_id = Column(String, nullable=False)
+    chosen_value = Column(Text, nullable=False)
+    chosen_model = Column(String, nullable=True)
+    rationale = Column(Text, default="")
+    version = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

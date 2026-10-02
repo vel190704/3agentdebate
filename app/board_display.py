@@ -1,5 +1,39 @@
 from typing import Dict
 
+# Statuses where the system never produced a confident answer a human can
+# just defer to - a genuine tie (human_decision_required) or no answer at
+# all because a model call broke (debate_failed). This is where recording a
+# human's own decision (HumanDecision) actually adds information; offering
+# it under a status the system already resolved confidently would blur the
+# signal this feature exists to capture (see HumanDecision's docstring).
+HUMAN_INPUT_ELIGIBLE_STATUSES = {"human_decision_required", "debate_failed"}
+
+
+def current_values_by_model(decision: Dict) -> Dict[str, str]:
+    """The per-model values a human comparing their own answer should be
+    compared against - the most recent values that actually exist, in order:
+    round 2 (once a full debate transcript exists) -> round 1 (a
+    debate_failed decision that broke between round 1 and round 2 still has
+    a real, possibly-revised round 1 position - round 1 restates a model's
+    position in its own words rather than echoing the original proposal
+    verbatim, so it can genuinely differ from values_by_model) -> the
+    original pre-debate proposal (no debate at all, or debate_failed before
+    even round 1 completed).
+
+    Falling straight from round 2 to the original proposal (skipping a
+    round 1 that did complete) would silently show a stale value for a
+    failed_round=2 decision whenever round 1's wording moved - this chain
+    exists so that gap can't happen.
+    """
+    debate = decision.get("debate") or {}
+    round2_values = {m["model"]: m["value"] for m in debate.get("round_2") or []}
+    if round2_values:
+        return round2_values
+    round1_values = {m["model"]: m["value"] for m in debate.get("round_1") or []}
+    if round1_values:
+        return round1_values
+    return decision.get("values_by_model") or {}
+
 
 def decision_badge(decision: Dict) -> Dict:
     """Maps a decision's status onto the badge the board shows. Pure

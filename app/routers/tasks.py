@@ -24,6 +24,9 @@ def build_task_detail(task_id: str, db: Session) -> Optional[Dict]:
 
     decisions = db.query(models.DecisionResult).filter_by(task_id=task_id).all()
 
+    framing_rows = db.query(models.FramingDecision).filter_by(task_id=task_id).all()
+    value_options_by_decision = {r.decision_id: r.value_options or [] for r in framing_rows}
+
     proposed = db.query(models.ProposedDecision).filter_by(task_id=task_id).all()
     details_by_decision: dict = {}
     for p in proposed:
@@ -112,6 +115,21 @@ def build_task_detail(task_id: str, db: Session) -> Optional[Dict]:
             "cost_usd": ev.cost_usd,
         }
 
+    # One recorded human answer per decision_id, if any (see HumanDecision's
+    # docstring - this is a human-authored annotation sitting alongside the
+    # system's own output, never read by the pipeline or merged into it).
+    human_decision_rows = db.query(models.HumanDecision).filter_by(task_id=task_id).all()
+    human_decision_by_id = {
+        hd.decision_id: {
+            "chosen_value": hd.chosen_value,
+            "chosen_model": hd.chosen_model,
+            "rationale": hd.rationale,
+            "version": hd.version,
+            "updated_at": hd.updated_at,
+        }
+        for hd in human_decision_rows
+    }
+
     return {
         "task_id": task.id,
         "project_id": task.project_id,
@@ -128,10 +146,12 @@ def build_task_detail(task_id: str, db: Session) -> Optional[Dict]:
                 "values_by_model": d.values_by_model,
                 "details_by_model": details_by_decision.get(d.decision_id, {}),
                 "coupled_with": d.coupled_with,
+                "value_options": value_options_by_decision.get(d.decision_id, []),
                 "debate": debate_by_decision.get(d.decision_id),
                 "arbiter": d.arbiter_result,
                 "synthesis": d.synthesis,
                 "error_ledger": ledger_by_decision.get(d.decision_id, []),
+                "human_decision": human_decision_by_id.get(d.decision_id),
             }
             for d in decisions
         ],

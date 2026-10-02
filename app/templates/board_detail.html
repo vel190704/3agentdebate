@@ -23,6 +23,44 @@
   {% endif %}
 {% endmacro %}
 
+{% macro human_decision_widget(d) %}
+  <div class="round-label">Your decision</div>
+  {% if d.human_decision %}
+    <div class="human-decision-box">
+      <div class="kv"><span class="k">Recorded choice:</span> {{ d.human_decision.chosen_value }}</div>
+      {% if d.human_decision.chosen_model %}
+      <div class="kv muted">Matches {{ d.human_decision.chosen_model }}'s proposal.</div>
+      {% else %}
+      <div class="kv muted">Matches neither model's wording verbatim.</div>
+      {% endif %}
+      {% if d.human_decision.rationale %}
+      <div class="kv"><span class="k">Rationale:</span> {{ d.human_decision.rationale }}</div>
+      {% endif %}
+      <div class="kv muted">Recorded {{ d.human_decision.updated_at }}{% if d.human_decision.version > 1 %} &middot; revised {{ d.human_decision.version - 1 }} time{{ 's' if d.human_decision.version > 2 else '' }}{% endif %}. This never changes the status or value above it - it's kept alongside the system's output for later comparison, not in place of it.</div>
+      <details class="drilldown">
+        <summary>Revise this</summary>
+        <form method="post" action="/board/{{ task.task_id }}/human-decision" class="human-decision-form">
+          <input type="hidden" name="decision_id" value="{{ d.decision_id }}">
+          <label>Your choice</label>
+          <input type="text" name="chosen_value" value="{{ d.human_decision.chosen_value }}" required>
+          <label>Why (optional)</label>
+          <textarea name="rationale">{{ d.human_decision.rationale }}</textarea>
+          <button type="submit" class="verify-btn">Save revision</button>
+        </form>
+      </details>
+    </div>
+  {% else %}
+    <form method="post" action="/board/{{ task.task_id }}/human-decision" class="human-decision-form">
+      <input type="hidden" name="decision_id" value="{{ d.decision_id }}">
+      <label>Your choice</label>
+      <input type="text" name="chosen_value" placeholder="e.g. one of the values above, or your own synthesis" required>
+      <label>Why (optional)</label>
+      <textarea name="rationale" placeholder="What made you decide this way?"></textarea>
+      <button type="submit" class="verify-btn">Record my decision</button>
+    </form>
+  {% endif %}
+{% endmacro %}
+
 {% block content %}
 <div class="top-nav"><a href="/board">&larr; All tasks</a></div>
 <h1>{{ task.description }}</h1>
@@ -61,7 +99,7 @@
   {% if d.winning_value %}
   <div class="winning-value"><span class="label">Value</span>{{ d.winning_value }}</div>
   {% elif d.status in ('human_decision_required', 'debate_failed') %}
-  <div class="winning-value"><span class="label">{% if d.status == 'debate_failed' %}Original proposals (debate incomplete){% else %}Values on the table{% endif %}</span>
+  <div class="winning-value"><span class="label">{% if d.status == 'debate_failed' %}Last known positions (debate incomplete){% else %}Values on the table{% endif %}</span>
     {% for model, value in d.current_values_by_model.items() %}{{ model }}: {{ value }}{% if not loop.last %} &middot; {% endif %}{% endfor %}
   </div>
   {% endif %}
@@ -103,6 +141,10 @@
       <div class="kv">A model call failed and could not be recovered after transport retries. Whatever rounds completed before the failure are shown below; anything after it never happened.</div>
       {% if d.debate.error %}<div class="kv muted">{{ d.debate.error }}</div>{% endif %}
     </div>
+    {% endif %}
+
+    {% if d.debate_diagram %}
+    <div class="debate-diagram">{{ d.debate_diagram }}</div>
     {% endif %}
 
     <div class="round-label">Debate — round 1{% if d.debate.failed and d.debate.failed_round == 1 %} (failed){% endif %}</div>
@@ -186,6 +228,10 @@
     {% if d.synthesis %}
     <div class="round-label">Synthesis</div>
     <div class="synthesis-box">{{ d.synthesis }}</div>
+    {% endif %}
+
+    {% if d.human_input_eligible %}
+    {{ human_decision_widget(d) }}
     {% endif %}
   </details>
 </div>
